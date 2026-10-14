@@ -32,6 +32,7 @@ public class CommandLineController {
     private Integer displayId;
     private File videoFile;
     private String errorMessage;
+    private final List<FrameProcessor> frameProcessors = new ArrayList<>();
 
     public CommandLineController(String[] args) {
         this.args = args.clone();
@@ -54,6 +55,10 @@ public class CommandLineController {
 
     public int getExitCode() {
         return errorMessage == null ? 0 : 1;
+    }
+    
+    public List<FrameProcessor> getFrameProcessors() {
+    	return new ArrayList<>(frameProcessors);
     }
 
     public Integer getDisplayId() {
@@ -105,6 +110,58 @@ public class CommandLineController {
                 errorMessage = "No video file specified.";
             }
         }
+    }
+    
+    // Mapping each short and long option to a new processor instance
+    private FrameProcessor createFrameProcessor(String option) {
+    	switch (option) {
+	    	case "-n":
+	    	case "--number-frames":
+	    		return new FrameNumberer();
+	    		
+	    	case "-s":
+	    	case "--scratch-frames":
+	    		return new FrameScratcher();
+	    	
+	    	case "-f":
+	    	case "--flicker-frames":
+	    		return new FrameFlickerer();
+    	
+		    case "-w":
+			case "--black-and-white":
+				return new FrameBlackAndWhiter();
+			
+			case "-y":
+			case "--yellow-frames":
+				return new FrameYellower();
+				
+			case "-v":
+			case "--vignette-frames":
+				return new FrameVignetter();
+				
+			case "-d":
+			case "--dust-frames":
+				return new FrameDuster();
+				
+			case "-j":
+			case "--jitter-frames":
+				return new FrameJitterer();
+				
+			case "-m":
+			case "--mottle-frames":
+				return new FrameMottler();
+				
+			case "-b":
+			case "--bleed-frames":
+				return new FrameBleeder();
+				
+			case "-p":
+			case "--pepper-frames":
+				return new FramePepperer();
+				
+			default:
+				return null;
+    	}
     }
 
     private void setDisplayId(int displayId) {

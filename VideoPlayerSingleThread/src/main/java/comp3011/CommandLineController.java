@@ -37,6 +37,7 @@ public class CommandLineController {
     public CommandLineController(String[] args) {
         this.args = args.clone();
         parse();
+//        System.out.println("Frame processors: " + frameProcessors.stream().map(p -> p.getClass().getSimpleName()).toList());
         if (errorMessage != null) {
             System.out.println(errorMessage);
         }
@@ -79,31 +80,98 @@ public class CommandLineController {
 
     private void parse() {
         List<String> videoFiles = new ArrayList<>();
-        for (String arg : args) {
-            if ("-h".equals(arg) || "--help".equals(arg)) {
-                helpRequested = true;
-            } else if ("-a".equals(arg) || "--audio".equals(arg)) {
-                audioRequested = true;
-            } else if ("-x".equals(arg) || "--maximise".equals(arg)) {
-                maximiseRequested = true;
-            } else if ("-1".equals(arg) || "--monitor-1".equals(arg)) {
-                setDisplayId(1);
-            } else if ("-2".equals(arg) || "--monitor-2".equals(arg)) {
-                setDisplayId(2);
-            } else if (arg.startsWith("-")) {
-                errorMessage = "Unknown option: " + arg;
-            } else {
-                videoFiles.add(arg);
-            }
+        
+        //Mapping short and long options to file options
+        for (int i = 0; i < args.length; i++) {
+        	String arg = args[i];
+        	
+        	switch (arg) {
+        		case "-h":
+        		case "--help":
+        			helpRequested = true;
+        			continue;
+        			
+        		case "-a":
+        		case "--audio":
+        			audioRequested = true;
+        			continue;
+        			
+        		case "-x":
+        		case "--maximise":
+        			maximiseRequested = true;
+        			continue;
+        			
+        		case "-1":
+        		case "--monitor-1":
+        			setDisplayId(1);
+        			continue;
+        			
+        		case "-2":
+        		case "--monitor-2":
+        			setDisplayId(2);
+        			continue;
+        			
+        		default:
+        			break;
+        	}
+        	
+        	// Long frame processor options or short options
+        	FrameProcessor processor = createFrameProcessor(arg);
+        	
+        	if (processor != null) {
+        		frameProcessors.add(processor);
+        		continue;
+        	}
+        	
+        	// Stacked short option
+        	if (arg.startsWith("-") && !arg.startsWith("--") && arg.length() > 2) {
+        		
+        		boolean validStack = true;
+        		List<FrameProcessor> stackedProcessors = new ArrayList<>();
+        		
+        		for (int j = 1; j < arg.length(); j++) {
+        			String shortOption = "-" + arg.charAt(j);
+        			FrameProcessor stackedProcessor = createFrameProcessor(shortOption);
+        			
+        			if (stackedProcessor == null) {
+        				validStack = false;
+        				break;
+        			}
+        			
+        			stackedProcessors.add(stackedProcessor);
+        		}
+        		
+        		if (validStack) {
+        			frameProcessors.addAll(stackedProcessors);
+        		}
+        		else
+        		{
+        			errorMessage = "Unknown option: " + arg;
+        			return;
+        		}
+        		
+        		continue;
+        	}
+        	
+        	if (arg.startsWith("-")) {
+        		errorMessage = "Unknown option: " + arg;
+        		return;
+        	}
+        	
+        	videoFiles.add(arg);
         }
 
         if (videoFiles.size() > 1) {
-            errorMessage = "Usage: VideoPlayer [options] [video-file]";
-        } else if (videoFiles.size() == 1) {
+            errorMessage = "(Only one video file may be specified) Usage: VideoPlayer [options] [video-file]";
+            return;
+        } 
+        
+        if (videoFiles.size() == 1) {
             videoFile = new File(videoFiles.get(0));
+            
             if (!videoFile.isFile()) {
                 errorMessage = "File not found: " + videoFile.getPath();
-                videoFile = null;
+                return;
             }
         } else {
             if (!helpRequested) {
@@ -181,5 +249,18 @@ public class CommandLineController {
         System.out.println("  -x, --maximise     Open the player maximised");
         System.out.println("  -1, --monitor-1    Open the player on display 1");
         System.out.println("  -2, --monitor-2    Open the player on display 2");
+        System.out.println();
+        System.out.println("Frame processors:");
+        System.out.println("  -n, --number-frames    Render the frame number onto each frame");
+        System.out.println("  -s, --scratch-frames   Render vertical film scratches");
+        System.out.println("  -f, --flicker-frames   Randomly dim frames");
+        System.out.println("  -w, --black-and-white  Convert frames to black and white");
+        System.out.println("  -y, --yellow-frames    Apply a warmer colour temperature");
+        System.out.println("  -v, --vignette-frames  Darken the frame edges");
+        System.out.println("  -d, --dust-frames      Render dust and hair marks");
+        System.out.println("  -j, --jitter-frames    Randomly displace frames by a few pixels");
+        System.out.println("  -m, --mottle-frames    Add cloudy emulsion mottling");
+        System.out.println("  -b, --bleed-frames     Bleed light into frames");
+        System.out.println("  -p, --pepper-frames    Pepper frames with dark spots/blotches");
     }
 }

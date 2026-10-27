@@ -121,22 +121,6 @@ public class VideoPlayerModel {
 //        frameProcessors.add(new FrameNumberer());
     }
     
-    // gets the count of the workers from the number of available processors the videoplayer can use,
-    // one is kept in reserve to leave some CPU capacity for other features.
-    private final int workerCount = Math.max(1, Runtime.getRuntime().availableProcessors() - 1);
-    
-    // newFixedThreadPool allows us to reuse threads instead of creating new ones for every frame
-    private final ExecutorService executor = Executors.newFixedThreadPool(workerCount, new ThreadFactory() {
-    	private int threadNum = 1;
-    	
-    	public Thread newThread(Runnable task) {
-    		// each thread is named to help with debugging
-    		Thread thread = new Thread(task, "worker-" + threadNum++);
-    		thread.setDaemon(true);
-    		return thread;
-    	}
-    });
-
     public void play(File file) {
         videoFile = file;
         videoDurationUs = NO_SEEK_REQUEST;
@@ -204,6 +188,32 @@ public class VideoPlayerModel {
     public void shutdown() {
         closePlaybackResources();
     }
+    
+    // gets the count of the workers from the number of available processors the videoplayer can use,
+    // one is kept in reserve to leave some CPU capacity for other features.
+    private final int workerCount = Math.max(1, Runtime.getRuntime().availableProcessors() - 1);
+    
+    // newFixedThreadPool allows us to reuse threads instead of creating new ones for every frame
+    private final ExecutorService executor = Executors.newFixedThreadPool(workerCount, new ThreadFactory() {
+    	private int threadNum = 1;
+    	
+    	public Thread newThread(Runnable task) {
+    		// each thread is named to help with debugging
+    		Thread thread = new Thread(task, "worker-" + threadNum++);
+    		thread.setDaemon(true);
+    		return thread;
+    	}
+    });
+    
+    // creates an independent copy of the frame which includes the image buffer.
+    private Frame copyFrame(Frame source) {
+    	if (source == null || source.image == null) {
+    		throw new IllegalArgumentException("Cannot Copy Frame");
+    	}
+    	
+    	return source.clone();
+    }
+
 
     private void seekRelative(long offsetUs) {
         if (videoFile == null) {
@@ -364,9 +374,20 @@ public class VideoPlayerModel {
 
             int frameNumber = grabber.getFrameNumber();
             InfoFrame info = new InfoFrame(frameNumber, timestampUs);
-            processFrame(frame, info);
-
-            Image image = converter.convert(frame);
+            
+            // the copied frame recieves the effects and is then processed.
+            // it is then closed after the conversion
+            Frame processingFrame = copyFrame(frame);
+            Image image;
+            
+            try {
+            	// HERE IS THE FRAME PROCESSOR
+                processFrame(processingFrame, info);
+                image = converter.convert(processingFrame);
+            } finally {
+            	processingFrame.clone();
+            }
+            
             long relativeTimestampUs = Math.max(0, timestampUs - firstTimestampUs);
             long logicalTimestampUs = logicalPlaybackBaseUs + relativeTimestampUs;
             long targetTimeNs = playbackStartNs + relativeTimestampUs * 1_000L;

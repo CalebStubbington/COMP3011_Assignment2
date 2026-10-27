@@ -385,7 +385,7 @@ public class VideoPlayerModel {
                 processFrame(processingFrame, info);
                 image = converter.convert(processingFrame);
             } finally {
-            	processingFrame.clone();
+            	processingFrame.close();
             }
             
             long relativeTimestampUs = Math.max(0, timestampUs - firstTimestampUs);

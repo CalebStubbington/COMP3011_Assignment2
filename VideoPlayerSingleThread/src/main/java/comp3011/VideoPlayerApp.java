@@ -4,7 +4,7 @@
  * 
  * Authors:
  *   1. Simon Ratcliffe, in collaboration with GPT-5.6 Terra
- *   2. <student name and student number insert here upon modification>
+ *   2.	Caleb Stubbington, a2991661
  *
  * Copyright 2026 Simon Ratcliffe
  */
@@ -45,7 +45,8 @@ public class VideoPlayerApp extends Application {
 
         controller = new VideoPlayerController(
                 commandLineController.isAudioRequested(),
-                this::setVideoSize);
+                this::setVideoSize,
+                commandLineController.getFrameProcessors());
 
         Scene scene = new Scene(controller.getView().getRoot());
         controller.installKeyboardShortcuts(scene);

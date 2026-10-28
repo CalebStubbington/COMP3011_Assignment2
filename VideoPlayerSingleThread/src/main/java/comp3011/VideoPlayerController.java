@@ -123,6 +123,12 @@ public class VideoPlayerController {
     }
 
     private void onFrameReady(Image image) {
+    	if (image == null) {
+    		System.out.println("recieved null image");
+    		view.setImage(null);
+    		return;
+    	}
+    	System.out.println("Frame ready: " + image.getWidth() + "x" + image.getHeight());
         view.setImage(image);
     }
 

@@ -80,6 +80,12 @@ public class CommandLineController {
     }
 
     private void parse() {
+    	for (String arg : args) {
+    		if (arg.equals("-h") || arg.equals("--help")) {
+    			helpRequested = true;
+    			return;
+    		}
+    	}
         List<String> videoFiles = new ArrayList<>();
         
         //Mapping short and long options to file options

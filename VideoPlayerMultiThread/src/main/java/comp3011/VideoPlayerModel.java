@@ -40,7 +40,7 @@ import java.util.concurrent.FutureTask;
 import java.util.concurrent.RejectedExecutionException;
 
 /**
- *  Concurrency design:
+ *  <p>Concurrency design:
  *  The JavaFX application thread controls playback timing and updates the displayed image. Video frames
  *  are decoded and submitted for processing, and a bounded worker pool applies the configured frame processors.
  *  Completed frames are retained in submission order so that a slower worker does not cause a later frame to be
@@ -54,20 +54,9 @@ import java.util.concurrent.RejectedExecutionException;
  *  is closed.
  *  
  *  while this coordinates shared resources and stale work, they do not guarantee the correct invocation of a processor across multiple
- *  workers. That would require more time than I have to implement.
+ *  workers. That would require more time than I have to implement.<p>
  */
 
-/**
- * The model part of the video player model-view-controller architecture.
- *
- * <p>
- * Owns the FFmpeg decoder, playback clock, seeking logic, audio scheduling,
- * and frame processing - which it all manages through cooperative multi-tasking
- * on a single thread. It publishes decoded frames and playback state through
- * callbacks supplied by its owning {@link VideoPlayerController}, keeping it
- * decoupled from the JavaFX view.
- * </p>
- */
 public class VideoPlayerModel {
     private static final long NO_SEEK_REQUEST = -1; // Sentinel value used when no seek position is active.
     private static final long FIVE_SECONDS_US = 5_000_000L;
@@ -845,10 +834,15 @@ public class VideoPlayerModel {
     		}
         }
     }
-
+    
+    // initalises each configured processor with metadata
+    // uses the same processor lock as processFrame() so it cannot overlap with 
+    // processing on that processor instance.
     private void initialiseFrameProcessors(InfoVideo videoInfo) throws Exception {
         for (FrameProcessor processor : frameProcessors) {
-            processor.initialise(videoInfo);
+        	synchronized (processor) {
+        		processor.initialise(videoInfo);
+        	}
         }
     }
 

@@ -208,7 +208,7 @@ public class VideoPlayerModel {
     
     // gets the count of the workers from the number of available processors the videoplayer can use,
     // one is kept in reserve to leave some CPU capacity for other features.
-    private final int workerCount = Math.max(1, Math.min(4, Runtime.getRuntime().availableProcessors() - 1));
+    private final int workerCount = Math.max(1, Runtime.getRuntime().availableProcessors() - 1);
     
     // this is the maxmium number of frames that can be processed/waiting at a time
     private final int maxPendingFrames = workerCount * 3;

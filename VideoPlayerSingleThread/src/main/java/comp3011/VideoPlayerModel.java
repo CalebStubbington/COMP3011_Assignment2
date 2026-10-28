@@ -600,6 +600,13 @@ public class VideoPlayerModel {
 
         // Task (1)
         writeDueAudio(now);
+        
+        // checks if the latest frame has been finished
+        try {
+        	retrieveProcessedFrame();
+        } catch (Exception e) {
+        	handlePlaybackError(e);
+        }
 
         // Task (2)
         if (preparedFrame != null && preparedFrame.targetTimeNs() <= now) {
@@ -612,15 +619,26 @@ public class VideoPlayerModel {
         // to replace this whole block with simple linear control flow logic
         // such as: if (!pauseRequested && preparedFrame == null) prepareNextFrame();
         // to compare.
-        if (!pauseRequested && preparedFrame == null && !prepareNextFrameQueued) {
+        if (!pauseRequested && preparedFrame == null && !prepareNextFrameQueued && !endVideoReached && pendingFrames.size() < maxPendingFrames) {
             prepareNextFrameQueued = true;
             Platform.runLater(() -> {
                 prepareNextFrameQueued = false;
 
-                if (!pauseRequested) {
-                    prepareNextFrame();
+                if (!pauseRequested || endVideoReached) {
+                    return;
+                }
+                
+                try {
+                	decodeAndSubmitNextFrame();
+                } catch (Exception e) {
+                	handlePlaybackError(e);
                 }
             });
+            
+          if (playbackOpen && endVideoReached && pendingFrames.isEmpty() && preparedFrame == null && pendingAudio.isEmpty()) {
+        	  finishPlayback();
+          }
+            
         }
     }
 

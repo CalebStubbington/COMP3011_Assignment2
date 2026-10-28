@@ -394,15 +394,29 @@ public class VideoPlayerModel {
     		long logicalTimestampUs,
     		long targetTimeNs) throws Exception {
     	
+    	long taskStartNs = System.nanoTime();
+    	
     	try {
+    		long taskTimeUs = (System.nanoTime() - taskStartNs) / 1_000;
+
+    		if (frameNumber % 30 == 0) {
+    		    System.out.println("Total worker time for frame "
+    		            + frameNumber + ": " + taskTimeUs + " us");
+    		}
     		// Apply the configured effects in order
     		processFrame(processingFrame, info);
     		
     		// creates a converter locally for this processing task
     		JavaFXFrameConverter frameConverter = new JavaFXFrameConverter();
     		
+    		long conversionStartNs = System.nanoTime();
     		// converts the frame into an image
     		Image image = frameConverter.convert(processingFrame);
+    		long conversionTimeUs = (System.nanoTime() - conversionStartNs) / 1_000;
+    		
+    		if (frameNumber % 30 == 0) {
+    			System.out.println("Frame conversion: " + conversionTimeUs + " us");
+    		}
     		
     		// repackages the image and its timing information 
     		return new PreparedFrame(
@@ -663,10 +677,12 @@ public class VideoPlayerModel {
             long generation = playbackGeneration;
             
             Platform.runLater(() -> {
+            	prepareNextFrameQueued = false;
+            	
             	if (generation != playbackGeneration) {
             		return;
             	}
-                prepareNextFrameQueued = false;
+                
 
                 // this ensure decoding can only happen when the playback is open and unpaused and hasnt ended
                 if (!playbackOpen || pauseRequested || endVideoReached) {

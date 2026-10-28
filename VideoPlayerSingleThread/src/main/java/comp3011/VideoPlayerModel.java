@@ -397,12 +397,6 @@ public class VideoPlayerModel {
     	long taskStartNs = System.nanoTime();
     	
     	try {
-    		long taskTimeUs = (System.nanoTime() - taskStartNs) / 1_000;
-
-    		if (frameNumber % 30 == 0) {
-    		    System.out.println("Total worker time for frame "
-    		            + frameNumber + ": " + taskTimeUs + " us");
-    		}
     		// Apply the configured effects in order
     		processFrame(processingFrame, info);
     		
@@ -413,6 +407,13 @@ public class VideoPlayerModel {
     		// converts the frame into an image
     		Image image = frameConverter.convert(processingFrame);
     		long conversionTimeUs = (System.nanoTime() - conversionStartNs) / 1_000;
+    		
+    		long taskTimeUs = (System.nanoTime() - taskStartNs) / 1_000;
+
+    		if (frameNumber % 30 == 0) {
+    		    System.out.println("Total worker time for frame "
+    		            + frameNumber + ": " + taskTimeUs + " us");
+    		}
     		
     		if (frameNumber % 30 == 0) {
     			System.out.println("Frame conversion: " + conversionTimeUs + " us");
@@ -496,7 +497,13 @@ public class VideoPlayerModel {
     		return;
     	}
     	
+    	long decodeStart = System.nanoTime();
     	Frame frame = grabFrame();
+    	long decodetime = (System.nanoTime() - decodeStart) / 1_000L;
+    	
+    	if (frame != null && grabber.getFrameNumber() % 30 == 0) {
+    		System.out.println("decode time for frame: " + grabber.getFrameNumber() + ": " + decodetime + " us");
+    	}
     	
     	// stops decoding
     	if (frame == null) {
@@ -670,7 +677,7 @@ public class VideoPlayerModel {
         // to compare.
         // Caleb:
         // I've updated the statement to also compare if the number of pendingframes isn't at its max and if the video has finished
-        if (!pauseRequested && preparedFrame == null && !prepareNextFrameQueued && !endVideoReached && pendingFrames.size() < maxPendingFrames) {
+        if (!pauseRequested && !prepareNextFrameQueued && !endVideoReached && pendingFrames.size() < maxPendingFrames) {
             prepareNextFrameQueued = true;
             
             // remembers which playback session scheduled this

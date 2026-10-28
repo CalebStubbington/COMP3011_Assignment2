@@ -619,23 +619,27 @@ public class VideoPlayerModel {
         // to replace this whole block with simple linear control flow logic
         // such as: if (!pauseRequested && preparedFrame == null) prepareNextFrame();
         // to compare.
+        // Caleb:
+        // I've updated the statement to also compare if the number of pendingframes isn't at its max and if the video has finished
         if (!pauseRequested && preparedFrame == null && !prepareNextFrameQueued && !endVideoReached && pendingFrames.size() < maxPendingFrames) {
             prepareNextFrameQueued = true;
             Platform.runLater(() -> {
                 prepareNextFrameQueued = false;
 
-                if (!pauseRequested || endVideoReached) {
+                // this ensure decoding can only happen when the playback is open and unpaused and hasnt ended
+                if (!playbackOpen || pauseRequested || endVideoReached) {
                     return;
                 }
-                
+                // decodes the frame or throws error
                 try {
                 	decodeAndSubmitNextFrame();
                 } catch (Exception e) {
                 	handlePlaybackError(e);
                 }
             });
-            
-          if (playbackOpen && endVideoReached && pendingFrames.isEmpty() && preparedFrame == null && pendingAudio.isEmpty()) {
+          
+            // finish only if all queues are empty
+            if (playbackOpen && endVideoReached && pendingFrames.isEmpty() && preparedFrame == null && pendingAudio.isEmpty()) {
         	  finishPlayback();
           }
             

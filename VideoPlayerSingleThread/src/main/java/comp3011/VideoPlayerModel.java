@@ -30,6 +30,9 @@ import javafx.scene.image.Image;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.ArrayBlockingQueue;
 
 
 /**
@@ -194,16 +197,20 @@ public class VideoPlayerModel {
     private final int workerCount = Math.max(1, Runtime.getRuntime().availableProcessors() - 1);
     
     // newFixedThreadPool allows us to reuse threads instead of creating new ones for every frame
-    private final ExecutorService executor = Executors.newFixedThreadPool(workerCount, new ThreadFactory() {
-    	private int threadNum = 1;
-    	
-    	public Thread newThread(Runnable task) {
-    		// each thread is named to help with debugging
-    		Thread thread = new Thread(task, "worker-" + threadNum++);
-    		thread.setDaemon(true);
-    		return thread;
-    	}
-    });
+    private final ThreadPoolExecutor executor = new ThreadPoolExecutor(workerCount, workerCount, 0L, TimeUnit.MILLISECONDS,
+    		new ArrayBlockingQueue<>(workerCount * 2), 
+    		new ThreadFactory() {
+    			private int threadNum = 1;
+    			
+    			@Override
+		    	public Thread newThread(Runnable task) {
+		    		// each thread is named to help with debugging
+		    		Thread thread = new Thread(task, "worker-" + threadNum++);
+		    		thread.setDaemon(true);
+		    		return thread;
+		    	}
+		    },
+    		new ThreadPoolExecutor.AbortPolicy());
     
     // creates an independent copy of the frame which includes the image buffer.
     private Frame copyFrame(Frame source) {

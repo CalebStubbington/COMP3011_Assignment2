@@ -207,7 +207,7 @@ public class VideoPlayerModel {
     
     // gets the count of the workers from the number of available processors the videoplayer can use,
     // one is kept in reserve to leave some CPU capacity for other features.
-    private final int workerCount = Math.min(4, Runtime.getRuntime().availableProcessors() - 1);
+    private final int workerCount = Math.max(1, Runtime.getRuntime().availableProcessors() - 1);
     
     // this is the maxmium number of frames that can be processed/waiting at a time
     private final int maxPendingFrames = workerCount * 3;
@@ -378,7 +378,8 @@ public class VideoPlayerModel {
     		int frameNumber,
     		long relativeTimestampUs,
     		long logicalTimestampUs,
-    		long targetTimeNs) throws Exception {
+    		long targetTimeNs,
+    		long generation) throws Exception {
     	
     	try {
     		// Apply the configured effects in order
@@ -414,11 +415,12 @@ public class VideoPlayerModel {
     		int frameNumber,
     		long relativeTimestampUs,
     		long logicalTimestampUs,
-    		long targetTimeNs) {
+    		long targetTimeNs,
+    		long generation) {
     	
     	// schedules the work and applies the effects/converts the frame
     	FutureTask<PreparedFrame> task = new FutureTask<>(() -> processDecodedFrame(processingFrame, info, timestampUs, frameNumber,
-    			relativeTimestampUs, logicalTimestampUs, targetTimeNs));
+    			relativeTimestampUs, logicalTimestampUs, targetTimeNs, generation));
     			
     			executor.execute(task);
     			return task;
@@ -534,7 +536,7 @@ public class VideoPlayerModel {
         
         try {
         	// submit the frame for process and track its order
-        	Future<PreparedFrame> future = submitFrame(processingFrame, info, timestampUs, frameNumber, relativeTimestampUs, logicalTimestampUs, targetTimeNs);
+        	Future<PreparedFrame> future = submitFrame(processingFrame, info, timestampUs, frameNumber, relativeTimestampUs, logicalTimestampUs, targetTimeNs, generation);
         	
         	pendingFrames.add(future);
         } catch (RuntimeException e) {
@@ -778,8 +780,13 @@ public class VideoPlayerModel {
     }
 
     private void processFrame(Frame frame, InfoFrame info) throws Exception {
-        for (FrameProcessor processor : frameProcessors) {
-            processor.process(frame, info);
+        
+    	// for each frame we lock each processor individually
+    	// a single global lock would prevent different frames from processing concurrently
+    	for (FrameProcessor processor : frameProcessors) {
+    		synchronized (processor) {
+    			processor.process(frame, info);
+    		}
         }
     }
 

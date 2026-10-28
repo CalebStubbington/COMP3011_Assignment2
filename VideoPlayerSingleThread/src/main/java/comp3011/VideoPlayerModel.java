@@ -37,6 +37,7 @@ import java.util.concurrent.CancellationException;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
 import java.util.concurrent.FutureTask;
+import java.util.concurrent.RejectedExecutionException;
 
 
 /**
@@ -207,7 +208,7 @@ public class VideoPlayerModel {
     
     // gets the count of the workers from the number of available processors the videoplayer can use,
     // one is kept in reserve to leave some CPU capacity for other features.
-    private final int workerCount = Math.max(1, Runtime.getRuntime().availableProcessors() - 1);
+    private final int workerCount = Math.max(1, Math.min(4, Runtime.getRuntime().availableProcessors() - 1));
     
     // this is the maxmium number of frames that can be processed/waiting at a time
     private final int maxPendingFrames = workerCount * 3;
@@ -347,6 +348,10 @@ public class VideoPlayerModel {
 
     private void resetPlaybackClock(long logicalTimestampUs) {
     	
+    	for (Future<PreparedFrame> future : pendingFrames) {
+    		future.cancel(true);
+    	}
+    	
     	prepareNextFrameQueued = false;
     	playbackGeneration++;
         pendingAudio.clear();
@@ -382,9 +387,15 @@ public class VideoPlayerModel {
     		long generation) throws Exception {
     	
     	try {
+    		if (Thread.currentThread().isInterrupted()) {
+    		    throw new InterruptedException("Frame processing cancelled");
+    		}
     		// Apply the configured effects in order
     		processFrame(processingFrame, info);
     		
+    		if (Thread.currentThread().isInterrupted()) {
+    		    throw new InterruptedException("Frame processing cancelled");
+    		}
     		// creates a converter locally for this processing task
     		JavaFXFrameConverter frameConverter = new JavaFXFrameConverter();
     		
@@ -419,11 +430,28 @@ public class VideoPlayerModel {
     		long generation) {
     	
     	// schedules the work and applies the effects/converts the frame
-    	FutureTask<PreparedFrame> task = new FutureTask<>(() -> processDecodedFrame(processingFrame, info, timestampUs, frameNumber,
-    			relativeTimestampUs, logicalTimestampUs, targetTimeNs, generation));
-    			
+    	FutureTask<PreparedFrame> task = new FutureTask<>(
+    			() -> processDecodedFrame(processingFrame, 
+    					info, 
+    					timestampUs, 
+    					frameNumber,
+    			relativeTimestampUs, 
+    			logicalTimestampUs, 
+    			targetTimeNs, 
+    			generation));
+    		try {
     			executor.execute(task);
     			return task;
+    		} catch (RejectedExecutionException e) {
+    			// the executor cannot take any more work
+    			// cancel the task so it cannot be used
+    			task.cancel(false);
+    			
+    			// releases the copied frame so it will not process
+    			processingFrame.close();
+    			return null;
+    		}
+    			
     }
     
     // retrieves the next processed frame when the worker is finsihed
@@ -534,16 +562,15 @@ public class VideoPlayerModel {
         long targetTimeNs = playbackStartNs + relativeTimestampUs * 1_000L;
         long generation = playbackGeneration;
         
-        try {
-        	// submit the frame for process and track its order
-        	Future<PreparedFrame> future = submitFrame(processingFrame, info, timestampUs, frameNumber, relativeTimestampUs, logicalTimestampUs, targetTimeNs, generation);
+        // submit the frame for process and track its order
+        Future<PreparedFrame> future = submitFrame(
+        		processingFrame, info, timestampUs, frameNumber, 
+        		relativeTimestampUs, logicalTimestampUs, targetTimeNs, generation);
         	
+        if (future != null) {
         	pendingFrames.add(future);
-        } catch (RuntimeException e) {
-        	// release the copy if it fails
-        	processingFrame.close();
-        	throw e;
         }
+        	
     }
 
     // This is called on a heart beat by the GUI thread. We want to be co-operative here by (a) not blocking, and (b)
@@ -705,6 +732,11 @@ public class VideoPlayerModel {
     }
 
     private void closePlaybackResources() {
+    	// attempts to cancel each task and interrupts it
+    	for (Future<PreparedFrame> future : pendingFrames) {
+    		future.cancel(true);
+    	}
+    	
     	playbackTimer.stop();
         playbackOpen = false;
         

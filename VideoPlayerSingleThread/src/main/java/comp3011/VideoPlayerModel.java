@@ -36,6 +36,7 @@ import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
+import java.util.concurrent.FutureTask;
 
 
 /**
@@ -59,6 +60,7 @@ public class VideoPlayerModel {
     // Tracks frame processing tasks in order
     // playback retrieves results in order
     private final Queue<Future<PreparedFrame>> pendingFrames = new ArrayDeque<>();
+    private final Queue<Long> pendingFrameGenerations = new ArrayDeque<>();
     private final BiConsumer<Integer, Integer> videoSizeChangedHandler;
     private final Consumer<Image> frameReadyHandler;
     private final Consumer<String> statusChangedHandler;
@@ -328,10 +330,8 @@ public class VideoPlayerModel {
     }
 
     private void resetPlaybackClock(long logicalTimestampUs) {
-    	// cancels left over processing tassk before resetting
-    	for (Future<PreparedFrame> future : pendingFrames) {
-    		future.cancel(true);
-    	}
+    	
+    	pendingFrameGenerations.clear();
     	
     	playbackGeneration++;
     	
@@ -414,9 +414,19 @@ public class VideoPlayerModel {
     		long logicalTimestampUs,
     		long targetTimeNs) {
     	
-    	// schedules the work and applies the effects/coverts the frame
-    	return executor.submit(() -> processDecodedFrame(processingFrame, info, timestampUs, frameNumber,
-    			relativeTimestampUs, logicalTimestampUs, targetTimeNs));
+    	// schedules the work and applies the effects/converts the frame
+    	FutureTask<PreparedFrame> task = new FutureTask<>(() -> processDecodedFrame(processingFrame, info, timestampUs, frameNumber,
+    			relativeTimestampUs, logicalTimestampUs, targetTimeNs)) {
+    				@Override
+    				protected void done() {
+    					if(isCancelled()) {
+    						processingFrame.close();
+    					}
+    				}
+    			};
+    			
+    			executor.execute(task);
+    			return task;
     }
     
     // retrieves the next processed frame when the worker is finsihed
@@ -435,10 +445,15 @@ public class VideoPlayerModel {
     	}
     	
     	pendingFrames.remove();
+    	long generation = pendingFrameGenerations.remove();
     	
     	// retrieves the finished frame or throws an exception
     	try {
-    		preparedFrame = future.get();
+    		PreparedFrame result = future.get();
+    		
+    		if (generation == playbackGeneration) {
+    			preparedFrame = result;
+    		}
     	} 
     	catch (CancellationException e) {
     		// task gets cancelled
@@ -523,6 +538,7 @@ public class VideoPlayerModel {
         	Future<PreparedFrame> future = submitFrame(processingFrame, info, timestampUs, frameNumber, relativeTimestampUs, logicalTimestampUs, targetTimeNs);
         	
         	pendingFrames.add(future);
+        	pendingFrameGenerations.add(playbackGeneration);
         } catch (RuntimeException e) {
         	// release the copy if it fails
         	processingFrame.close();
@@ -658,10 +674,11 @@ public class VideoPlayerModel {
                 }
             });
           
-            // finish only if all queues are empty
-            if (playbackOpen && endVideoReached && pendingFrames.isEmpty() && preparedFrame == null && pendingAudio.isEmpty()) {
-        	  finishPlayback();
+            
           }
+	     // finish only if all queues are empty
+	        if (playbackOpen && endVideoReached && pendingFrames.isEmpty() && preparedFrame == null && pendingAudio.isEmpty()) {
+	    	  finishPlayback();
             
         }
     }
@@ -753,10 +770,8 @@ public class VideoPlayerModel {
     }
 
     private void closePlaybackResources() {
-    	// same thing as reset, cancels leftover tasks before closing
-    	for (Future<PreparedFrame> future : pendingFrames) {
-    		future.cancel(true);
-    	}
+    	
+    	pendingFrameGenerations.clear();
     	
         playbackTimer.stop();
         playbackOpen = false;

@@ -4,10 +4,12 @@
  * 
  * Authors:
  *   1. Simon Ratcliffe, in collaboration with GPT-5.6 Terra
- *   2. Caleb Stubbington, a2991661
+ *   2. Caleb Stubbington, a2991661 in collarboration with GPT-6
  *
  * Copyright 2026 Simon Ratcliffe
  */
+
+
 package comp3011;
 
 import java.io.File;
@@ -27,8 +29,6 @@ import javafx.animation.AnimationTimer;
 import javafx.application.Platform;
 import javafx.scene.image.Image;
 
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
@@ -39,6 +39,23 @@ import java.util.concurrent.Future;
 import java.util.concurrent.FutureTask;
 import java.util.concurrent.RejectedExecutionException;
 
+/**
+ *  Concurrency design:
+ *  The JavaFX application thread controls playback timing and updates the displayed image. Video frames
+ *  are decoded and submitted for processing, and a bounded worker pool applies the configured frame processors.
+ *  Completed frames are retained in submission order so that a slower worker does not cause a later frame to be
+ *  displayed ahead of an earlier frame
+ *  
+ *  The bounded worker queue limits the amount of frames processing and help reduce the amount of resources in use
+ *  when effects cannot keep up with the video player.
+ *  
+ *  Shared frame processors are sycned when invoked. Playback resets use a generation indetifier to seperate current work from 
+ *  work submitted before either a seek or reset happened. Pending tasks are cancelled and resources are released when the playback
+ *  is closed.
+ *  
+ *  while this coordinates shared resources and stale work, they do not guarantee the correct invocation of a processor across multiple
+ *  workers. That would require more time than I have to implement.
+ */
 
 /**
  * The model part of the video player model-view-controller architecture.
@@ -116,7 +133,6 @@ public class VideoPlayerModel {
             BiConsumer<Boolean, Boolean> playbackStateChangedHandler,
             Consumer<Boolean> audioOutputStateChangedHandler, 
             List<FrameProcessor> frameProcessors) {
-    	logWorkerConfiguration();
         audioOutputEnabled = audioEnabled;
         this.videoSizeChangedHandler = videoSizeChangedHandler;
         this.frameReadyHandler = frameReadyHandler;
@@ -199,22 +215,27 @@ public class VideoPlayerModel {
         notifyFrameReady(null);
         notifyPlaybackStateChanged();
     }
-
+    
+    
     public void shutdown() {
         closePlaybackResources();
         // shutdown the executor
         executor.shutdownNow();
     }
     
-    // gets the count of the workers from the number of available processors the videoplayer can use,
-    // one is kept in reserve to leave some CPU capacity for other features.
-    private final int workerCount = Math.max(1, Runtime.getRuntime().availableProcessors() - 1);
+    // gets the count of the workers from the number of available processors the videoplayer can use.
+    // the count is limited to prevent all CPU cores being used for frame processing, leaving nothing for
+    // other features
+    private final int workerCount = Math.max(1, Math.min(6, Runtime.getRuntime().availableProcessors() - 1));
     
     // this is the maxmium number of frames that can be processed/waiting at a time
+    // limits the number of frames that can wait for completion to it cannot cause
+    // a backlog of frames and memory usage
     private final int maxPendingFrames = workerCount * 3;
     
     // manages a fixed number of threads instead of creating new ones for every frame
     // this pool allows us to concurrently process individual frames
+    // the bounded task queue limits outstanding work when effects cannot keep up with the playback.
     private final ThreadPoolExecutor executor = new ThreadPoolExecutor(workerCount, workerCount, 0L, TimeUnit.MILLISECONDS,
     		
     		// limits queued tasks to prevent too many frames from overloading memory
@@ -235,12 +256,7 @@ public class VideoPlayerModel {
 		    },
     		// aborts new tasks if the pool and its queue is full
     		new ThreadPoolExecutor.AbortPolicy());
-    
-    private void logWorkerConfiguration() {
-    	System.out.println("Available processors: " + Runtime.getRuntime().availableProcessors());
-    	System.out.println("worker count: " + workerCount);
-    	System.out.println("Max pending frames: " + maxPendingFrames);
-    }
+   
     
     // creates an independent copy of the frame which includes the image buffer.
     private Frame copyFrame(Frame source) {
@@ -348,16 +364,15 @@ public class VideoPlayerModel {
 
     private void resetPlaybackClock(long logicalTimestampUs) {
     	
+    	// Clears work from previous playback so frames that finish after a seek or reset
+        // cannot be used in the current playback.
     	for (Future<PreparedFrame> future : pendingFrames) {
     		future.cancel(true);
     	}
-    	
+    	pendingFrames.clear();
     	prepareNextFrameQueued = false;
     	playbackGeneration++;
         pendingAudio.clear();
-        
-        // clears frames from queue
-        pendingFrames.clear();
         preparedFrame = null;
         endVideoReached = false; 
         currentTimestampUs = logicalTimestampUs;
@@ -411,6 +426,8 @@ public class VideoPlayerModel {
     				targetTimeNs,
     				System.nanoTime(),
     				generation);
+    		// release the worker's copied frame even if the processor fails, 
+    		// so repeated playback does not accumulate resources.
     	} finally {
     		// releases the copied frame
     		processingFrame.close();
@@ -555,6 +572,8 @@ public class VideoPlayerModel {
         int frameNumber = grabber.getFrameNumber();
         InfoFrame info = new InfoFrame(frameNumber, timestampUs);
         
+        // gives the worker a copied frame so it can process the image without
+        // depending on the grabber reusing or modifying the original frame.
         Frame processingFrame = copyFrame(frame);
         
         long relativeTimestampUs = Math.max(0, timestampUs - firstTimestampUs);
@@ -587,7 +606,9 @@ public class VideoPlayerModel {
         // Task (1)
         writeDueAudio(now);
         
-        // checks if the latest frame has been finished
+        // checks if the oldest frame has been finished
+        // retrieves the oldest submitted frame first as a later frame may process sooner
+        // but we dont want it to display first as it would disrupt the playback order.
         try {
         	retrieveProcessedFrame();
         } catch (Exception e) {
@@ -732,7 +753,8 @@ public class VideoPlayerModel {
     }
 
     private void closePlaybackResources() {
-    	// attempts to cancel each task and interrupts it
+    	// Stops workers and releases playback resources during shutdown.
+    	// workers may already be running so it doesnt guarantee that it stops immediately
     	for (Future<PreparedFrame> future : pendingFrames) {
     		future.cancel(true);
     	}
@@ -815,6 +837,8 @@ public class VideoPlayerModel {
         
     	// for each frame we lock each processor individually
     	// a single global lock would prevent different frames from processing concurrently
+    	// Some processors may hold mutable states, meaning we have to synchronise each shared processor
+    	// so multiple workers cannot use the processor at the same time.
     	for (FrameProcessor processor : frameProcessors) {
     		synchronized (processor) {
     			processor.process(frame, info);

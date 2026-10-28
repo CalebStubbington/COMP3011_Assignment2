@@ -115,6 +115,7 @@ public class VideoPlayerModel {
             BiConsumer<Boolean, Boolean> playbackStateChangedHandler,
             Consumer<Boolean> audioOutputStateChangedHandler, 
             List<FrameProcessor> frameProcessors) {
+    	logWorkerConfiguration();
         audioOutputEnabled = audioEnabled;
         this.videoSizeChangedHandler = videoSizeChangedHandler;
         this.frameReadyHandler = frameReadyHandler;
@@ -206,7 +207,7 @@ public class VideoPlayerModel {
     
     // gets the count of the workers from the number of available processors the videoplayer can use,
     // one is kept in reserve to leave some CPU capacity for other features.
-    private final int workerCount = Math.max(1, Runtime.getRuntime().availableProcessors() - 1);
+    private final int workerCount = Math.min(4, Runtime.getRuntime().availableProcessors() - 1);
     
     // this is the maxmium number of frames that can be processed/waiting at a time
     private final int maxPendingFrames = workerCount * 3;
@@ -233,6 +234,12 @@ public class VideoPlayerModel {
 		    },
     		// aborts new tasks if the pool and its queue is full
     		new ThreadPoolExecutor.AbortPolicy());
+    
+    private void logWorkerConfiguration() {
+    	System.out.println("Available processors: " + Runtime.getRuntime().availableProcessors());
+    	System.out.println("worker count: " + workerCount);
+    	System.out.println("Max pending frames: " + maxPendingFrames);
+    }
     
     // creates an independent copy of the frame which includes the image buffer.
     private Frame copyFrame(Frame source) {
@@ -449,7 +456,7 @@ public class VideoPlayerModel {
     	
     	// retrieves the finished frame or throws an exception
     	try {
-    		PreparedFrame result = future.get();
+    		preparedFrame = future.get();
     		
     	} 
     	catch (CancellationException e) {

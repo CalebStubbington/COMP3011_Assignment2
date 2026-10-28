@@ -33,6 +33,7 @@ import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
 
@@ -102,6 +103,8 @@ public class VideoPlayerModel {
     private long playbackStartNs;
     private long pauseStartedNs;
     private long relativeSeekBaseUs = NO_SEEK_REQUEST;
+    // this is the current playback session
+    private long playbackGeneration = 0;
 
     public VideoPlayerModel(
             boolean audioEnabled,
@@ -325,11 +328,19 @@ public class VideoPlayerModel {
     }
 
     private void resetPlaybackClock(long logicalTimestampUs) {
+    	// cancels left over processing tassk before resetting
+    	for (Future<PreparedFrame> future : pendingFrames) {
+    		future.cancel(true);
+    	}
+    	
+    	playbackGeneration++;
+    	
         pendingAudio.clear();
+        
         // clears frames from queue
         pendingFrames.clear();
         preparedFrame = null;
-        endVideoReached = false;
+        endVideoReached = false; 
         currentTimestampUs = logicalTimestampUs;
         relativeSeekBaseUs = logicalTimestampUs;
         firstTimestampUs = NO_SEEK_REQUEST;
@@ -429,6 +440,10 @@ public class VideoPlayerModel {
     	try {
     		preparedFrame = future.get();
     	} 
+    	catch (CancellationException e) {
+    		// task gets cancelled
+    		preparedFrame = null;
+    	}
     	
     	catch (ExecutionException e) {
     		Throwable cause = e.getCause();
@@ -501,6 +516,7 @@ public class VideoPlayerModel {
         long relativeTimestampUs = Math.max(0, timestampUs - firstTimestampUs);
         long logicalTimestampUs = logicalPlaybackBaseUs + relativeTimestampUs;
         long targetTimeNs = playbackStartNs + relativeTimestampUs * 1_000L;
+        long generation = playbackGeneration;
         
         try {
         	// submit the frame for process and track its order
@@ -623,6 +639,10 @@ public class VideoPlayerModel {
         // I've updated the statement to also compare if the number of pendingframes isn't at its max and if the video has finished
         if (!pauseRequested && preparedFrame == null && !prepareNextFrameQueued && !endVideoReached && pendingFrames.size() < maxPendingFrames) {
             prepareNextFrameQueued = true;
+            
+            // remembers which playback session scheduled this
+            long generation = playbackGeneration;
+            
             Platform.runLater(() -> {
                 prepareNextFrameQueued = false;
 
@@ -733,10 +753,16 @@ public class VideoPlayerModel {
     }
 
     private void closePlaybackResources() {
+    	// same thing as reset, cancels leftover tasks before closing
+    	for (Future<PreparedFrame> future : pendingFrames) {
+    		future.cancel(true);
+    	}
+    	
         playbackTimer.stop();
         playbackOpen = false;
         preparedFrame = null;
         endVideoReached = false;
+        prepareNextFrameQueued = false;
         pendingAudio.clear();
         // clears queued frame when the playback is closed
         pendingFrames.clear();
